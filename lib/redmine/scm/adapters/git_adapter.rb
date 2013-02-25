@@ -16,11 +16,13 @@
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
 require 'redmine/scm/adapters/abstract_adapter'
+require 'rugged'
 
 module Redmine
   module Scm
     module Adapters
       class GitAdapter < AbstractAdapter
+        unloadable
 
         # Git executable name
         GIT_BIN = Redmine::Configuration['scm_git_command'] || "git"
@@ -63,6 +65,7 @@ module Redmine
 
         def initialize(url, root_url=nil, login=nil, password=nil, path_encoding=nil)
           super
+          @repo = Rugged::Repository.new(url)
           @path_encoding = path_encoding.blank? ? 'UTF-8' : path_encoding
         end
 
@@ -81,30 +84,20 @@ module Redmine
         def branches
           return @branches if @branches
           @branches = []
-          cmd_args = %w|branch --no-color --verbose --no-abbrev|
-          git_cmd(cmd_args) do |io|
-            io.each_line do |line|
-              branch_rev = line.match('\s*(\*?)\s*(.*?)\s*([0-9a-f]{40}).*$')
-              bran = GitBranch.new(branch_rev[2])
-              bran.revision =  branch_rev[3]
-              bran.scmid    =  branch_rev[3]
-              bran.is_default = ( branch_rev[1] == '*' )
-              @branches << bran
-            end
-          end
-          @branches.sort!
-        rescue ScmCommandAborted
-          nil
+
+          head = @repo.head.name.match('refs/heads/(.*)')[1]
+          @branches = @repo.branches.map do |branch|
+            bran = GitBranch.new(branch.name)
+            bran.revision = branch.target
+            bran.scmid    = branch.target
+            bran.is_default = (branch.name == head)
+            bran
+          end.sort!
         end
 
         def tags
           return @tags if @tags
-          cmd_args = %w|tag|
-          git_cmd(cmd_args) do |io|
-            @tags = io.readlines.sort!.map{|t| t.strip}
-          end
-        rescue ScmCommandAborted
-          nil
+          @tags = @repo.tags.sort
         end
 
         def default_branch
